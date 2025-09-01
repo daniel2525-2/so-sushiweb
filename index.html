@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Pedido Cliente - SO Sushi</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <img src="https://img.icons8.com/color/96/000000/sushi.png" alt="Sushi Icon" class="logo">
+            <h1>Haz tu pedido</h1>
+            <p class="subtitle">Selecciona tus productos y envía tu pedido por WhatsApp</p>
+        </header>
+        <!-- Pantalla de selección de productos -->
+        <div id="pantallaProductos">
+            <form id="pedidoClienteForm">
+                <h2>Selecciona productos</h2>
+                <div class="menu-group tarjetas-productos">
+                    <!-- Productos aquí -->
+                </div>
+                <div class="form-group">
+                    <label>Total a cobrar:</label>
+                    <span id="totalPedidoCliente">$0.00</span>
+                </div>
+                <div id="resumenPedidoCliente" style="margin:8px 0 18px 0;"></div>
+                <button id="continuarBtn" type="button" class="btn-continuar" style="margin-top:12px;">Continuar</button>
+            </form>
+        </div>
+        <!-- Pantalla de datos del cliente -->
+        <div id="pantallaDatosCliente" style="display:none;">
+            <form id="datosClienteForm">
+                <h2>Datos del cliente</h2>
+                <div class="form-group">
+                    <label for="nombreCliente">Nombre:</label>
+                    <input type="text" id="nombreCliente" name="nombreCliente" required>
+                </div>
+                <div class="form-group">
+                    <label for="numeroCliente">Número de teléfono:</label>
+                    <input type="tel" id="numeroCliente" name="numeroCliente" required pattern="[0-9]{7,}">
+                </div>
+                <div class="form-group">
+                    <label for="direccionCliente">Dirección:</label>
+                    <input type="text" id="direccionCliente" name="direccionCliente" required>
+                </div>
+                <button type="submit" style="margin-top:12px;">Enviar pedido</button>
+            </form>
+        </div>
+        <div id="alertaPedidoExito" style="display:none;position:fixed;top:24px;left:50%;transform:translateX(-50%);background:#eaf6f6;border:2px solid #457b9d;color:#1d3557;padding:18px 32px;border-radius:18px;box-shadow:0 2px 12px rgba(69,123,157,0.12);font-size:1.15em;font-weight:bold;z-index:999;text-align:center;">
+            <span style="font-size:1.5em;color:#457b9d;">✔️</span> ¡Pedido enviado con éxito!
+        </div>
+        <div id="mensajeCliente"></div>
+    </div>
+    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+    <script>
+    const SERVER_URL = 'https://dimelo-kvvj.onrender.com';
+    let productosSeleccionados = [];
+
+    function cargarMenuCliente() {
+        fetch(`${SERVER_URL}/menu`)
+            .then(res => res.json())
+            .then(menu => {
+                const menuGroup = document.querySelector('.tarjetas-productos');
+                productosSeleccionados = [];
+                menuGroup.innerHTML = menu.map(item =>
+                    `<div class="tarjeta-producto" data-id="${item._id}" style="cursor:pointer;">
+                        <div class="nombre-producto">${item.nombre}</div>
+                        <div class="descripcion-producto" style="font-size:0.95em;color:#457b9d;margin-bottom:4px;">${item.descripcion || ''}</div>
+                        <div class="precio-producto">$${item.precio.toFixed(2)}</div>
+                        <div class="cantidad-producto" id="cantidad_cliente_${item._id}" style="margin:6px 0;font-weight:bold;color:#e63946;">0</div>
+                        <select name="proteina_${item._id}" class="select-proteina" style="margin-top:6px;">
+                            <option value="">Proteína</option>
+                            <option value="camaron">Camarón</option>
+                            <option value="surimi">Surimi</option>
+                            <option value="pollo">Pollo</option>
+                        </select>
+                    </div>`
+                ).join('');
+                window._menuCacheCliente = {};
+                menu.forEach(item => window._menuCacheCliente[item._id] = item);
+                agregarListenersTarjetasProductoCliente(menu);
+                calcularTotalPedidoCliente();
+            });
+    }
+
+    function agregarListenersTarjetasProductoCliente(menu) {
+        document.querySelectorAll('.tarjeta-producto').forEach(card => {
+            const id = card.getAttribute('data-id');
+            card.addEventListener('click', function(e) {
+                if (e.target.classList.contains('select-proteina')) return;
+                const select = card.querySelector('.select-proteina');
+                const proteina = select ? select.value : '';
+                productosSeleccionados.push({ id, proteina });
+                if (select) select.value = '';
+                calcularTotalPedidoCliente();
+            });
+        });
+    }
+
+    function calcularTotalPedidoCliente() {
+        const cantidadesPorId = {};
+        productosSeleccionados.forEach(p => {
+            cantidadesPorId[p.id] = (cantidadesPorId[p.id] || 0) + 1;
+        });
+        let total = 0;
+        let resumen = [];
+        document.querySelectorAll('.tarjeta-producto').forEach(card => {
+            const id = card.getAttribute('data-id');
+            const precio = parseFloat(card.querySelector('.precio-producto').textContent.replace(/[^0-9.]/g, '')) || 0;
+            const cantidad = cantidadesPorId[id] || 0;
+            total += cantidad * precio;
+            const cantidadDiv = document.getElementById(`cantidad_cliente_${id}`);
+            if (cantidadDiv) cantidadDiv.textContent = cantidad;
+        });
+        if (window._menuCacheCliente) {
+            resumen = productosSeleccionados.map(p => {
+                const nombre = window._menuCacheCliente[p.id]?.nombre || '';
+                const prot = p.proteina ? ` (${p.proteina.charAt(0).toUpperCase() + p.proteina.slice(1)})` : '';
+                return `${nombre}${prot}`;
+            });
+        }
+        document.getElementById('totalPedidoCliente').textContent = `$${total.toFixed(2)}`;
+        let resumenDiv = document.getElementById('resumenPedidoCliente');
+        if (resumen.length > 0) {
+            // Agrupa iguales para mostrar xN
+            const agrupados = {};
+            productosSeleccionados.forEach(p => {
+                const nombre = window._menuCacheCliente[p.id]?.nombre || '';
+                const prot = p.proteina ? ` (${p.proteina.charAt(0).toUpperCase() + p.proteina.slice(1)})` : '';
+                const key = nombre + prot;
+                agrupados[key] = (agrupados[key] || 0) + 1;
+            });
+            resumenDiv.innerHTML = `<ul style="margin:6px 0 0 0;padding-left:18px;">${
+                Object.entries(agrupados).map(([k, v]) => `<li>${k} <b>x${v}</b></li>`).join('')
+            }</ul>`;
+        } else {
+            resumenDiv.innerHTML = '';
+        }
+    }
+
+    // Mostrar pantalla de datos del cliente al continuar
+    document.getElementById('continuarBtn').addEventListener('click', function() {
+        if (productosSeleccionados.length === 0) {
+            document.getElementById('mensajeCliente').textContent = 'Selecciona al menos un producto.';
+            return;
+        }
+        document.getElementById('pantallaProductos').style.display = 'none';
+        document.getElementById('pantallaDatosCliente').style.display = 'block';
+        document.getElementById('mensajeCliente').textContent = '';
+    });
+
+    // Enviar pedido desde la pantalla de datos del cliente
+    document.getElementById('datosClienteForm').addEventListener('submit', function(e) {
+        e.preventDefault();
+        const nombre = document.getElementById('nombreCliente').value.trim();
+        const numero = document.getElementById('numeroCliente').value.trim();
+        const direccion = document.getElementById('direccionCliente').value.trim();
+        if (!nombre || !numero || !direccion) {
+            document.getElementById('mensajeCliente').textContent = 'Completa todos los datos del cliente.';
+            return;
+        }
+        // Generar mensaje y estructura para backend y WhatsApp
+        const agrupados = {};
+        productosSeleccionados.forEach(p => {
+            const nombreProd = window._menuCacheCliente[p.id]?.nombre || '';
+            const prot = p.proteina ? ` (${p.proteina.charAt(0).toUpperCase() + p.proteina.slice(1)})` : '';
+            const key = nombreProd + prot;
+            agrupados[key] = (agrupados[key] || 0) + 1;
+        });
+
+        let mensaje = 'Hola, realicé mi pedido por SO Sushi Web';
+
+        // Estructura para backend
+        const pedido = {
+            nombre,
+            numero,
+            direccion,
+            total: document.getElementById('totalPedidoCliente').textContent
+        };
+        const agrupadosBackend = {};
+        productosSeleccionados.forEach(p => {
+            const key = `${p.id}__${p.proteina || ''}`;
+            if (!agrupadosBackend[key]) {
+                agrupadosBackend[key] = { cantidad: 0, proteina: p.proteina };
+            }
+            agrupadosBackend[key].cantidad += 1;
+        });
+        Object.entries(agrupadosBackend).forEach(([key, val]) => {
+            const [id] = key.split('__');
+            pedido[id] = { cantidad: val.cantidad, proteina: val.proteina };
+        });
+
+        // Enviar al backend
+        fetch(`${SERVER_URL}/pedido`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(pedido)
+        })
+        .then(res => res.json())
+        .then(data => {
+            // Mostrar alerta visual de éxito
+            const alerta = document.getElementById('alertaPedidoExito');
+            alerta.style.display = 'block';
+            setTimeout(() => { alerta.style.display = 'none'; }, 3500);
+            document.getElementById('mensajeCliente').textContent = '';
+            // Notificación WhatsApp solo con el mensaje fijo
+            const numeroW = '3314281634';
+            window.open(`https://wa.me/52${numeroW}?text=${encodeURIComponent(mensaje)}`, '_blank');
+            productosSeleccionados = [];
+            document.getElementById('datosClienteForm').reset();
+            document.getElementById('pantallaDatosCliente').style.display = 'none';
+            document.getElementById('pantallaProductos').style.display = 'block';
+            cargarMenuCliente();
+        })
+        .catch(() => {
+            document.getElementById('mensajeCliente').textContent = 'Error al enviar el pedido.';
+        });
+    });
+
+    // Socket.IO para actualizar menú en tiempo real
+    const socket = io(SERVER_URL);
+    socket.on('menuActualizado', () => {
+        cargarMenuCliente();
+    });
+
+    window.addEventListener('DOMContentLoaded', cargarMenuCliente);
+    </script>
+</body>
+</html>
+
